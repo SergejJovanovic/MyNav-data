@@ -72,8 +72,9 @@ class SerbianTests(unittest.TestCase):
 
 
 class FakeCollector:
-    def __init__(self, addresses, roads, places):
+    def __init__(self, addresses, roads, places, place_aliases=None):
         self.addresses, self.roads, self.places = addresses, roads, places
+        self.place_aliases = place_aliases or {}
 
 
 class AddressDatabaseTests(unittest.TestCase):
@@ -85,17 +86,22 @@ class AddressDatabaseTests(unittest.TestCase):
                 # Same street name in another town.
                 ("Змај Јовина", "5", "", 44.8200, 20.4600),
                 ("Главна", "1", "Футог", 45.2400, 19.7000),
+                # Town typed in English; an unknown town is ignored.
+                ("Кнеза Михаила", "10", "Belgrade", 44.8180, 20.4570),
+                ("Кнеза Михаила", "12", "Nowhere", 44.8181, 20.4571),
             ],
             roads=[("Змај Јовина", "Zmaj Jovina", 45.2558, 19.8452)],
             places=[("Novi Sad", "city", 45.2550, 19.8450), ("Beograd", "city", 44.8180, 20.4580), ("Veternik", "village", 45.2560, 19.8300)],
+            place_aliases={"novi sad": ("Novi Sad", 4.0), "beograd": ("Beograd", 4.0), "belgrade": ("Beograd", 4.0),
+                           "futog": ("Futog", 1.0), "veternik": ("Veternik", 1.0)},
         )
         return build_addresses.build(collector, "RS", "2026-11-25T21:00:00Z")
 
     def test_streets_are_split_by_town_and_named_in_latin(self):
         streets, addresses = self.build()
         towns = sorted((row[1], row[3]) for row in streets)
-        self.assertEqual(towns, [("Glavna", "Futog"), ("Zmaj Jovina", "Beograd"), ("Zmaj Jovina", "Novi Sad")])
-        self.assertEqual(len(addresses), 4)
+        self.assertEqual(towns, [("Glavna", "Futog"), ("Kneza Mihaila", "Beograd"), ("Zmaj Jovina", "Beograd"), ("Zmaj Jovina", "Novi Sad")])
+        self.assertEqual(len(addresses), 6)
 
     def test_a_city_wins_over_a_closer_village(self):
         streets, _ = self.build()
@@ -114,7 +120,7 @@ class AddressDatabaseTests(unittest.TestCase):
                 WHERE street_fts MATCH 'name : (zmaj jovina) AND city : (novi sad)' AND a.housenumber = '7'
             """).fetchall()
             self.assertEqual(rows, [("Zmaj Jovina", "Novi Sad", "7")])
-            self.assertEqual(dict(db.execute("SELECT key, value FROM meta"))["addresses"], "4")
+            self.assertEqual(dict(db.execute("SELECT key, value FROM meta"))["addresses"], "6")
             prefix = db.execute("SELECT count(*) FROM street_fts WHERE street_fts MATCH 'name : zma*'").fetchone()[0]
             self.assertEqual(prefix, 2)
 

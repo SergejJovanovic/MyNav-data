@@ -48,6 +48,7 @@ class Collector(osmium.SimpleHandler):
         self.addresses = []          # (street name, housenumber, addr:city, lat, lon)
         self.roads = []              # (name, name:sr-Latn, lat, lon)
         self.places = []             # (Latin name, kind, lat, lon)
+        self.place_aliases = {}      # normalised name in any language → Latin name ("belgrade" → "Beograd")
 
     def _address(self, tags, lat, lon):
         number = tags.get("addr:housenumber")
@@ -63,7 +64,15 @@ class Collector(osmium.SimpleHandler):
             self._address(tags, n.location.lat, n.location.lon)
         kind = tags.get("place")
         if kind in PLACE_REACH_METERS and "name" in tags:
-            self.places.append((display_name(tags), kind, n.location.lat, n.location.lon))
+            name = display_name(tags)
+            self.places.append((name, kind, n.location.lat, n.location.lon))
+            # Bigger places win an alias they share with a village ("Beograd" the city over a hamlet of that name).
+            rank = PLACE_WEIGHT[kind]
+            for key in ("name", "name:sr-Latn", "name:en", "int_name", "alt_name", "old_name"):
+                for alias in (tags.get(key) or "").split(";"):
+                    alias_key = normalize(alias)
+                    if alias_key and rank >= self.place_aliases.get(alias_key, ("", 0))[1]:
+                        self.place_aliases[alias_key] = (name, rank)
 
     def way(self, w):
         locations = [node.location for node in w.nodes if node.location.valid()]
@@ -125,10 +134,13 @@ def build(collector, country, osm_timestamp):
     for name, latin, lat, lon in collector.roads:
         street_for(name, latin, lat, lon)
     address_rows = []
+    aliases = getattr(collector, "place_aliases", {})
     for street, number, city, lat, lon in collector.addresses:
         key = street_for(street, None, lat, lon)
-        if city:
-            streets[key]["cities"][to_latin(city)] += 1
+        # `addr:city` counts only when it names a known place, in whatever language it was typed ("Belgrade").
+        town = aliases.get(normalize(city)) if city else None
+        if town:
+            streets[key]["cities"][town[0]] += 1
         address_rows.append((key, number, lat, lon))
 
     street_ids = {}
