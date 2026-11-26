@@ -1,0 +1,77 @@
+name: Build offline data
+
+on:
+  # Monthly, on the 2nd: fresh OpenStreetMap data for routing and address search.
+  schedule:
+    - cron: "0 3 2 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+
+  countries:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.read.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: echo "matrix=$(jq -c . countries.json)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [test, countries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        country: ${{ fromJson(needs.countries.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: sudo apt-get update -q && sudo apt-get install -y -q zstd
+      - name: Build ${{ matrix.country.name }}
+        run: tools/build_country.sh "${{ matrix.country.id }}" "${{ matrix.country.geofabrik }}" "${{ matrix.country.name }}" out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: country-${{ matrix.country.id }}
+          path: out/${{ matrix.country.id }}
+          retention-days: 3
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: country-*
+          path: artifacts
+      - name: Arrange packages
+        run: |
+          mkdir -p out
+          for dir in artifacts/country-*; do mv "$dir" "out/${dir#artifacts/country-}"; done
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="data-$(date -u +%Y-%m-%d)"
+          if gh release view "$tag" > /dev/null 2>&1; then tag="$tag-${{ github.run_number }}"; fi
+          python3 tools/build_manifest.py out "$tag" "$GITHUB_REPOSITORY" > /dev/null
+          gh release create "$tag" out/*/*.zst out/manifest.json \
+            --title "Offline data $tag" \
+            --notes "Valhalla routing tiles and address search databases built from OpenStreetMap data (© OpenStreetMap contributors, ODbL 1.0). See README for the format."
