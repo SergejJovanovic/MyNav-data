@@ -43,7 +43,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: sudo apt-get update -q && sudo apt-get install -y -q zstd
+      - run: sudo apt-get update -q && sudo apt-get install -y -q xz-utils
       - name: Build ${{ matrix.country.name }}
         run: tools/build_country.sh "${{ matrix.country.id }}" "${{ matrix.country.geofabrik }}" "${{ matrix.country.name }}" out
       - uses: actions/upload-artifact@v4
@@ -72,6 +72,6 @@ jobs:
           tag="data-$(date -u +%Y-%m-%d)"
           if gh release view "$tag" > /dev/null 2>&1; then tag="$tag-${{ github.run_number }}"; fi
           python3 tools/build_manifest.py out "$tag" "$GITHUB_REPOSITORY" > /dev/null
-          gh release create "$tag" out/*/*.zst out/manifest.json \
+          gh release create "$tag" out/*/*.xz out/manifest.json \
             --title "Offline data $tag" \
-            --notes "Valhalla routing tiles and address search databases built from OpenStreetMap data (© OpenStreetMap contributors, ODbL 1.0). See README for the format."
+            --notes "Valhalla routing tiles, address search and road data (traffic lights, crossings, lanes, speed limits) built from OpenStreetMap data (© OpenStreetMap contributors, ODbL 1.0). See README for the format."

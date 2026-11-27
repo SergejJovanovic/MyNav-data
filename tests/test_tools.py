@@ -127,3 +127,53 @@ class AddressDatabaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+import build_roaddata  # noqa: E402
+
+
+def read_varints(blob):
+    values, number, shift = [], 0, 0
+    for byte in blob:
+        number |= (byte & 0x7F) << shift
+        shift += 7
+        if not byte & 0x80:
+            values.append((number >> 1) ^ -(number & 1))
+            number, shift = 0, 0
+    return values
+
+
+class RoadDataTests(unittest.TestCase):
+    def test_node_ids_round_trip_as_deltas(self):
+        ids = [9_876_543_210, 9_876_543_215, 12, 9_876_543_300]
+        deltas = read_varints(build_roaddata.zigzag_varints(ids))
+        restored, total = [], 0
+        for delta in deltas:
+            total += delta
+            restored.append(total)
+        self.assertEqual(restored, ids)
+
+    def test_coordinates_round_trip_as_interleaved_deltas(self):
+        points = [(45255100, 19845100), (45255300, 19844900), (-33000000, -70000000)]
+        deltas = read_varints(build_roaddata.zigzag_coordinates(points))
+        restored, lat, lon = [], 0, 0
+        for index in range(0, len(deltas), 2):
+            lat += deltas[index]
+            lon += deltas[index + 1]
+            restored.append((lat, lon))
+        self.assertEqual(restored, points)
+
+    def test_only_tags_the_app_reads_are_kept(self):
+        class Tag:
+            def __init__(self, k, v):
+                self.k, self.v = k, v
+        tags = [Tag("highway", "primary"), Tag("maxspeed", "50"), Tag("turn:lanes:forward", "left|through"),
+                Tag("bus:lanes", "|designated"), Tag("surface", "asphalt"), Tag("name", "Bulevar")]
+        self.assertEqual(build_roaddata.kept_way_tags(tags),
+                         {"highway": "primary", "maxspeed": "50", "turn:lanes:forward": "left|through", "bus:lanes": "|designated", "name": "Bulevar"})
+
+    def test_roads_include_links_but_not_footways(self):
+        self.assertTrue(build_roaddata.is_road("primary_link"))
+        self.assertTrue(build_roaddata.is_road("service"))
+        self.assertFalse(build_roaddata.is_road("footway"))
+        self.assertFalse(build_roaddata.is_road(None))

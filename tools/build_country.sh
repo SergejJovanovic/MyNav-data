@@ -3,7 +3,8 @@
 #
 #   tools/build_country.sh RS europe/serbia Serbia out/
 #
-# Needs Docker, Python 3 with `osmium` (pip install -r requirements.txt) and zstd.
+# Needs Docker, Python 3 with `osmium` (pip install -r requirements.txt) and xz.
+# Packages are xz-compressed: Apple's Compression framework (LZMA) unpacks them on the phone.
 # Set PBF=/path/to/extract.osm.pbf to use an extract already on disk instead of downloading it.
 set -euo pipefail
 
@@ -38,12 +39,17 @@ docker run --rm -v "$WORK/valhalla:/data" -v "$WORK/latin.osm.pbf:/osm/source.os
   valhalla_build_extract -c /data/valhalla.json > /dev/null
   chmod -R a+rw /data'
 routing_installed=$(stat -c %s "$WORK/valhalla/tiles.tar" 2>/dev/null || stat -f %z "$WORK/valhalla/tiles.tar")
-zstd -q -19 -T0 -f "$WORK/valhalla/tiles.tar" -o "$OUT/$ID/routing-$ID.tar.zst"
+xz -9 -T0 -c "$WORK/valhalla/tiles.tar" > "$OUT/$ID/routing-$ID.tar.xz"
 
 echo "== Address database"
 "$PYTHON" "$TOOLS/build_addresses.py" "$PBF" "$WORK/addresses.sqlite" "$ID"
 addresses_installed=$(stat -c %s "$WORK/addresses.sqlite" 2>/dev/null || stat -f %z "$WORK/addresses.sqlite")
-zstd -q -19 -T0 -f "$WORK/addresses.sqlite" -o "$OUT/$ID/addresses-$ID.sqlite.zst"
+xz -9 -T0 -c "$WORK/addresses.sqlite" > "$OUT/$ID/addresses-$ID.sqlite.xz"
+
+echo "== Road data (traffic lights, crossings, crossroads, lanes, speed limits)"
+"$PYTHON" "$TOOLS/build_roaddata.py" "$PBF" "$WORK/roaddata.sqlite" "$ID"
+roaddata_installed=$(stat -c %s "$WORK/roaddata.sqlite" 2>/dev/null || stat -f %z "$WORK/roaddata.sqlite")
+xz -9 -T0 -c "$WORK/roaddata.sqlite" > "$OUT/$ID/roaddata-$ID.sqlite.xz"
 
 osm_timestamp=$("$PYTHON" -c "import osmium,sys; print(osmium.io.Reader(sys.argv[1], osmium.osm.osm_entity_bits.NOTHING).header().get('osmosis_replication_timestamp', ''))" "$PBF")
 valhalla_version="${VALHALLA_IMAGE##*:}"
@@ -53,8 +59,9 @@ cat > "$OUT/$ID/info.json" <<JSON
   "name": "$NAME",
   "osmTimestamp": "$osm_timestamp",
   "files": [
-    { "kind": "routing", "name": "routing-$ID.tar.zst", "installedBytes": $routing_installed, "valhallaVersion": "$valhalla_version" },
-    { "kind": "addresses", "name": "addresses-$ID.sqlite.zst", "installedBytes": $addresses_installed, "addressSchema": 1 }
+    { "kind": "routing", "name": "routing-$ID.tar.xz", "compression": "xz", "installedBytes": $routing_installed, "valhallaVersion": "$valhalla_version" },
+    { "kind": "addresses", "name": "addresses-$ID.sqlite.xz", "compression": "xz", "installedBytes": $addresses_installed, "addressSchema": 1 },
+    { "kind": "roaddata", "name": "roaddata-$ID.sqlite.xz", "compression": "xz", "installedBytes": $roaddata_installed, "roadDataSchema": 1 }
   ]
 }
 JSON
